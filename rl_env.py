@@ -17,27 +17,25 @@ class Action(Enum):
 
 class RamenFuryEnv(gym.Env):
     def __init__(self, n_players=2, hand_size=5):
-        self.observation_space = spaces.Dict(
-                {
-                    "pantry": spaces.MultiDiscrete([len(Type)] * 5),
-                    "hand": spaces.MultiDiscrete([len(Type)] * hand_size),
-                    "own_bowl_0": spaces.MultiDiscrete([len(Type)] * 5),
-                    "own_bowl_1": spaces.MultiDiscrete([len(Type)] * 5),
-                    "own_bowl_2": spaces.MultiDiscrete([len(Type)] * 5),
-                    # "opponent_bowls": spaces.Box(0, size - 1, shape=(2,), dtype=int),
-                }
-            )
-        # own hand + own bowl + opponent bowl + pantry + draw from deck
+        # self.observation_space = spaces.Dict(
+        #         {
+        #             "pantry": spaces.MultiDiscrete([len(Type)] * 5),
+        #             "hand": spaces.MultiDiscrete([len(Type)] * hand_size),
+        #             "own_bowl_0": spaces.MultiDiscrete([len(Type)] * 5),
+        #             "own_bowl_1": spaces.MultiDiscrete([len(Type)] * 5),
+        #             "own_bowl_2": spaces.MultiDiscrete([len(Type)] * 5),
+        #             # "opponent_bowls": spaces.Box(0, size - 1, shape=(2,), dtype=int),
+        #         }
+        #     )
+        # 5 in pantry, and 5 for each bowl
+        self.observation_space = spaces.MultiDiscrete([len(Type)] * (5 + hand_size + 15 * n_players))
         self.hand_size = hand_size
         self.n_players = n_players
-        # self.action_space = spaces.Tuple([spaces.Discrete(len(Action)), spaces.Discrete(hand_size + n_players * 3 + 5 + 1)])
-        # self.action_space = spaces.Tuple([spaces.Discrete(len(Action)), spaces.Discrete(n_players * hand_size * 3)])
         self.action_space = spaces.MultiDiscrete([len(Action), n_players * hand_size * 3])
         self.deck = Deck()
         self.set_up_game()
 
     def get_possible_actions(self, n_cards_in_hand, player_number):
-        # play_card = [[1, i] for i in range(self.n_players * self.hand_size * 3)]
         play_card = []
         for player_number in range(self.n_players):
             for card_idx in range(len(self.hands[f"player_{player_number}"])):
@@ -102,13 +100,15 @@ class RamenFuryEnv(gym.Env):
             player_hand += [Type.no_card.value] * (self.hand_size - len(player_hand))
         bowls = self.bowls[f"player_{player_number}"]
 
-        return {
+        state_dict = {
             "pantry": np.array([card.value for card in self.pantry], dtype=np.float32),
             "hand": np.array(player_hand, dtype=np.float32),
             "own_bowl_0": np.array([c.value for c in bowls[0]] + [Type.no_card.value for _ in range(5-len(bowls[0]))]),
             "own_bowl_1": np.array([c.value for c in bowls[1]] + [Type.no_card.value for _ in range(5-len(bowls[1]))]),
             "own_bowl_2": np.array([c.value for c in bowls[2]] + [Type.no_card.value for _ in range(5-len(bowls[2]))])
             }
+        keys = sorted(state_dict.keys())
+        return np.concatenate([state_dict[key] for key in keys])
 
     def set_up_game(self):
         self.deck = Deck()
@@ -176,13 +176,19 @@ class RamenFuryEnv(gym.Env):
 if __name__ == "__main__":
     from stable_baselines3.common.env_checker import check_env
     from stable_baselines3.common.env_util import make_vec_env
+    from gym.wrappers import FlattenObservation
     env = RamenFuryEnv(1, 5)
     check_env(env)
 
     from stable_baselines3 import PPO
-    n_iter = 10_000_000
-    ent_coef = 0.0
-    vec_env = make_vec_env(RamenFuryEnv, n_envs=4, env_kwargs={"n_players": 1, "hand_size": 5})
-    model = PPO("MultiInputPolicy", vec_env, verbose=1, ent_coef=ent_coef, tensorboard_log="logs/")
-    model.learn(total_timesteps=n_iter, tb_log_name=f"PPO_n_iter_{n_iter}_ef_{ent_coef}")
-    model.save("ramen-fury-ppo")
+    ent_coefs = [0.01, 0., 0.001, 0.1]  # ent_coef = 0.01
+    n_runs = 3
+    n_iter = 1_000_000
+    policy = "MlpPolicy"
+    for ent_coef in ent_coefs:
+        for _ in range(n_runs):
+            vec_env = make_vec_env(RamenFuryEnv, n_envs=4, env_kwargs={"n_players": 1, "hand_size": 5})
+            # model = PPO("MultiInputPolicy", vec_env, verbose=1, ent_coef=ent_coef, tensorboard_log="logs/")
+            model = PPO("MlpPolicy", vec_env, verbose=1, ent_coef=ent_coef, tensorboard_log="logs/")
+            model.learn(total_timesteps=n_iter, tb_log_name=f"PPO_n_iter_{n_iter}_ef_{ent_coef}_{policy}")
+            # model.save("ramen-fury-ppo")
